@@ -2,8 +2,7 @@ from pathlib import Path
 
 report = r"""# تقرير نظام إدارة متجر البقالة ونقطة البيع
 ## Grocery Store Management & Point of Sale System
-
-> **وثيقة فنية احترافية — Software Project Report**  
+*  
 > **الإصدار:** 1.0  
 > **حالة المشروع:** قيد التطوير والتحسين  
 > **التقنية:** Flutter / Dart / SQLite
