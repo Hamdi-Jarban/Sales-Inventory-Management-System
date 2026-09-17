@@ -1,5 +1,9 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'dart:math' as math;
+import 'package:untitled2/controller/invoice_controller.dart';
+import 'package:untitled2/controller/product_controller.dart';
+import 'package:untitled2/services/app_events.dart';
 
 class ReportsScreen extends StatefulWidget {
   const ReportsScreen({Key? key}) : super(key: key);
@@ -9,46 +13,130 @@ class ReportsScreen extends StatefulWidget {
 }
 
 class _ReportsScreenState extends State<ReportsScreen> {
+  final InvoiceController _invoiceController = InvoiceController();
+  final ProductController _productController = ProductController();
+
   int _periodIndex = 1;
-  bool _loading = false;
+  bool _loading = true;
 
   final List<String> _periods = ['اليوم', 'أسبوع', 'شهر', 'سنة'];
+  // عدد الأيام المقابل لكل فترة، تُستخدم في استعلامات SQL الفعلية.
+  final List<int> _periodDays = [1, 7, 30, 365];
 
-  // ============ بيانات وهمية ============
-
-  final List<Map<String, dynamic>> _dailySales = [
-    {'day': 'السبت', 'sales': 1250.0, 'profit': 320.0, 'invoices': 18},
-    {'day': 'الأحد', 'sales': 980.0, 'profit': 245.0, 'invoices': 14},
-    {'day': 'الاثنين', 'sales': 1420.0, 'profit': 385.0, 'invoices': 22},
-    {'day': 'الثلاثاء', 'sales': 1100.0, 'profit': 290.0, 'invoices': 16},
-    {'day': 'الأربعاء', 'sales': 1680.0, 'profit': 450.0, 'invoices': 25},
-    {'day': 'الخميس', 'sales': 2050.0, 'profit': 560.0, 'invoices': 31},
-    {'day': 'الجمعة', 'sales': 1890.0, 'profit': 510.0, 'invoices': 28},
+  static const List<Color> _categoryPalette = [
+    Color(0xFF0F5132),
+    Color(0xFF198754),
+    Color(0xFFFFB300),
+    Color(0xFF9C27B0),
+    Color(0xFF0288D1),
+    Color(0xFFD84315),
   ];
 
-  final List<Map<String, dynamic>> _categories = [
-    {'name': 'بقالة', 'value': 42.0, 'color': const Color(0xFF0F5132)},
-    {'name': 'ألبان', 'value': 28.0, 'color': const Color(0xFF198754)},
-    {'name': 'مشروبات', 'value': 18.0, 'color': const Color(0xFFFFB300)},
-    {'name': 'أخرى', 'value': 12.0, 'color': const Color(0xFF9C27B0)},
-  ];
+  // ============ بيانات حقيقية من SQLite (تُملأ في _loadData) ============
 
-  final List<Map<String, dynamic>> _topProducts = [
-    {'name': 'أرز الشعلان 5 كجم', 'profit': 315.0, 'qty': 45},
-    {'name': 'زيت عافية 1.5 لتر', 'profit': 280.0, 'qty': 80},
-    {'name': 'حليب المراعي 1 لتر', 'profit': 240.0, 'qty': 160},
-    {'name': 'شاي العروسة 250 جم', 'profit': 220.0, 'qty': 55},
-    {'name': 'جبن كرافت 200 جم', 'profit': 186.0, 'qty': 62},
-  ];
+  List<Map<String, dynamic>> _dailySales = [];
+  List<Map<String, dynamic>> _categories = [];
+  List<Map<String, dynamic>> _topProducts = [];
+  List<Map<String, dynamic>> _needRestock = [];
 
-  final List<Map<String, dynamic>> _needRestock = [
-    {'name': 'حليب المراعي 1 لتر', 'stock': 3, 'min': 5},
-    {'name': 'شاي العروسة 250 جم', 'stock': 2, 'min': 5},
-    {'name': 'بيض طازج 30 حبة', 'stock': 0, 'min': 6},
-    {'name': 'زيت عافية 1.5 لتر', 'stock': 1, 'min': 4},
-  ];
+  int _stockAvailable = 0;
+  int _stockLow = 0;
+  int _stockOut = 0;
 
-  // ============ الحسابات ============
+  StreamSubscription<AppEventType>? _eventsSub;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadData();
+    _eventsSub = AppEvents.instance.stream.listen((_) => _loadData());
+  }
+
+  @override
+  void dispose() {
+    _eventsSub?.cancel();
+    super.dispose();
+  }
+
+  String _isoDaysAgo(int days) =>
+      DateTime.now().subtract(Duration(days: days)).toIso8601String();
+
+  Future<void> _loadData() async {
+    setState(() => _loading = true);
+    final days = _periodDays[_periodIndex];
+    final afterIso = _isoDaysAgo(days);
+
+    final results = await Future.wait([
+      _invoiceController.getDailyTotals(days: days),
+      _invoiceController.getCategoryBreakdown(afterIso: afterIso),
+      _invoiceController.getTopProfitableProducts(limit: 5, afterIso: afterIso),
+      _productController.getLowStock(),
+      _productController.GetAll(),
+    ]);
+
+    final dailyRows = results[0] as List<Map<String, dynamic>>;
+    final categoryRows = results[1] as List<Map<String, dynamic>>;
+    final topRows = results[2] as List<Map<String, dynamic>>;
+    final lowStockProducts = results[3] as List;
+    final allProducts = results[4] as List;
+
+    final totalCategoryRevenue = categoryRows.fold<double>(
+        0, (s, r) => s + (r['total_revenue'] as num).toDouble());
+
+    final visibleProducts = allProducts.where((p) => p.isHidden != 1).toList();
+
+    if (!mounted) return;
+    setState(() {
+      _dailySales = dailyRows
+          .map((r) => {
+                'day': (r['day'] as String),
+                'sales': (r['total'] as num).toDouble(),
+                'profit': (r['profit'] as num).toDouble(),
+                'invoices': (r['invoices'] as num).toInt(),
+              })
+          .toList();
+
+      _categories = categoryRows.asMap().entries.map((entry) {
+        final revenue = (entry.value['total_revenue'] as num).toDouble();
+        final pct = totalCategoryRevenue > 0 ? (revenue / totalCategoryRevenue) * 100 : 0.0;
+        return {
+          'name': entry.value['category'] as String,
+          'value': pct,
+          'color': _categoryPalette[entry.key % _categoryPalette.length],
+        };
+      }).toList();
+
+      _topProducts = topRows
+          .map((r) => {
+                'name': r['name'] as String,
+                'profit': (r['total_profit'] as num).toDouble(),
+                'qty': (r['total_qty'] as num).toInt(),
+              })
+          .toList();
+
+      _needRestock = lowStockProducts
+          .map((p) => {
+                'name': p.name as String,
+                'stock': p.stock as int,
+                'min': p.minAlert as int,
+              })
+          .toList();
+
+      _stockOut = visibleProducts.where((p) => p.stock == 0).length;
+      _stockLow = visibleProducts.where((p) => p.stock > 0 && p.stock <= p.minAlert).length;
+      _stockAvailable = visibleProducts.where((p) => p.stock > p.minAlert).length;
+
+      _loading = false;
+    });
+  }
+
+  void _selectPeriod(int index) {
+    if (index == _periodIndex) return;
+    setState(() => _periodIndex = index);
+    _loadData();
+  }
+
+  // ============ الحسابات (من البيانات الحقيقية أعلاه) ============
 
   double get _totalSales =>
       _dailySales.fold(0, (s, d) => s + (d['sales'] as double));
@@ -60,13 +148,15 @@ class _ReportsScreenState extends State<ReportsScreen> {
   double get _profitMargin =>
       _totalSales == 0 ? 0 : (_totalProfit / _totalSales) * 100;
 
-  double get _maxSales =>
-      _dailySales.map((d) => d['sales'] as double).reduce(math.max);
-  double get _maxProfit =>
-      _dailySales.map((d) => d['profit'] as double).reduce(math.max);
+  double get _maxSales => _dailySales.isEmpty
+      ? 1
+      : _dailySales.map((d) => d['sales'] as double).reduce(math.max).clamp(1, double.infinity);
+  double get _maxProfit => _dailySales.isEmpty
+      ? 1
+      : _dailySales.map((d) => d['profit'] as double).reduce(math.max).clamp(1, double.infinity);
 
-  double get _todaySales => _dailySales.last['sales'] as double;
-  double get _todayProfit => _dailySales.last['profit'] as double;
+  double get _todaySales => _dailySales.isEmpty ? 0 : _dailySales.last['sales'] as double;
+  double get _todayProfit => _dailySales.isEmpty ? 0 : _dailySales.last['profit'] as double;
 
   String _money(num v) => '${v.toStringAsFixed(2)} ر.س';
   String _moneyShort(num v) {
@@ -75,10 +165,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
   }
 
   Future<void> _refresh() async {
-    setState(() => _loading = true);
-    await Future.delayed(const Duration(milliseconds: 500));
-    if (!mounted) return;
-    setState(() => _loading = false);
+    await _loadData();
   }
 
   @override
@@ -173,7 +260,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
           final selected = _periodIndex == e.key;
           return Expanded(
             child: GestureDetector(
-              onTap: () => setState(() => _periodIndex = e.key),
+              onTap: () => _selectPeriod(e.key),
               child: AnimatedContainer(
                 duration: const Duration(milliseconds: 200),
                 padding: const EdgeInsets.symmetric(vertical: 11),
@@ -745,6 +832,20 @@ class _ReportsScreenState extends State<ReportsScreen> {
   // ============ 5. رسم دائري للفئات ============
 
   Widget _buildCategoryPieChart() {
+    if (_categories.isEmpty) {
+      return Container(
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: Colors.grey[200]!),
+        ),
+        child: const Center(
+          child: Text('لا توجد مبيعات بعد خلال هذه الفترة',
+              style: TextStyle(color: Colors.grey, fontSize: 12.5)),
+        ),
+      );
+    }
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -860,7 +961,22 @@ class _ReportsScreenState extends State<ReportsScreen> {
   // ============ 6. الأكثر ربحية ============
 
   Widget _buildTopProducts() {
-    final maxProfit = _topProducts.first['profit'] as double;
+    if (_topProducts.isEmpty) {
+      return Container(
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: Colors.grey[200]!),
+        ),
+        child: const Center(
+          child: Text('لا توجد مبيعات بعد خلال هذه الفترة',
+              style: TextStyle(color: Colors.grey, fontSize: 12.5)),
+        ),
+      );
+    }
+    final maxProfit =
+        _topProducts.map((p) => p['profit'] as double).reduce(math.max).clamp(0.0001, double.infinity);
 
     return Container(
       decoration: BoxDecoration(
@@ -1022,10 +1138,10 @@ class _ReportsScreenState extends State<ReportsScreen> {
   // ============ 7. حالة المخزون ============
 
   Widget _buildStockStatus() {
-    const available = 79;
-    const low = 6;
-    const out = 2;
-    const total = 87;
+    final available = _stockAvailable;
+    final low = _stockLow;
+    final out = _stockOut;
+    final total = (available + low + out) == 0 ? 1 : (available + low + out);
 
     return Container(
       padding: const EdgeInsets.all(16),

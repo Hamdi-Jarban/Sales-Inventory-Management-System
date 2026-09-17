@@ -1,11 +1,15 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:untitled2/barcode_scanner_screen.dart';
-import 'package:untitled2/controller/customer_controller.dart';
 import 'package:untitled2/controller/invoice_controller.dart';
 import 'package:untitled2/controller/product_controller.dart';
 import 'package:untitled2/model/cart_service.dart';
 import 'package:untitled2/model/product.dart';
+import 'package:untitled2/services/app_events.dart';
+import 'package:untitled2/widgets/notification_bell.dart';
 import 'checkout_sheet.dart';
+import 'continuous_scanner_screen.dart';
+import 'settings_screen.dart';
 
 const _primary = Color(0xFF0F5132);
 
@@ -19,7 +23,6 @@ class PosScreen extends StatefulWidget {
 class _PosScreenState extends State<PosScreen> {
   final ProductController _productController = ProductController();
   final InvoiceController _invoiceController = InvoiceController();
-  final CustomerController _customerController = CustomerController();
   final CartService _cart = CartService();
 
   List<ProductModel> _allProducts = [];
@@ -28,11 +31,23 @@ class _PosScreenState extends State<PosScreen> {
   bool _showCartMobile = false;
   bool _loading = true;
   bool _saving = false;
+  StreamSubscription<AppEventType>? _eventsSub;
 
   @override
   void initState() {
     super.initState();
     _loadProducts();
+    _eventsSub = AppEvents.instance.stream.listen((type) {
+      if (type == AppEventType.products || type == AppEventType.all) {
+        _loadProducts();
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _eventsSub?.cancel();
+    super.dispose();
   }
 
   Future<void> _loadProducts() async {
@@ -98,6 +113,19 @@ class _PosScreenState extends State<PosScreen> {
     setState(() => _showCartMobile = true);
   }
 
+  /// زر الباركود العائم المستقل: يفتح شاشة مسح مستمرة (الكاميرا لا
+  /// تُغلق بين المنتجات) ولها تدفّق بيع خاص بها (مراجعة → عميل →
+  /// دفع → حفظ الفاتورة). لا يمس هذا سلوك [_scanBarcode] القديم إطلاقاً.
+  Future<void> _openContinuousScanner() async {
+    final saved = await Navigator.push<bool>(
+      context,
+      MaterialPageRoute(builder: (_) => const ContinuousScannerScreen()),
+    );
+    if (saved == true) {
+      await _loadProducts();
+    }
+  }
+
   void _showSnack(String message) {
     ScaffoldMessenger.of(context)
         .showSnackBar(SnackBar(content: Text(message)));
@@ -112,18 +140,11 @@ class _PosScreenState extends State<PosScreen> {
 
     setState(() => _saving = true);
     try {
-      int? customerId;
-      if (result.customerPhone != null || result.customerName != 'عميل نقدي') {
-        customerId = await _customerController.findOrCreate(
-          name: result.customerName,
-          phone: result.customerPhone,
-        );
-      }
-
       await _invoiceController.createInvoice(
         cartItems: _cart.items,
-        customerId: customerId,
+        customerId: result.customerId,
         customerName: result.customerName,
+        paymentMethod: result.paymentMethod,
         paymentStatus: result.paymentStatus,
         paidAmount: result.paidAmount,
       );
@@ -132,10 +153,16 @@ class _PosScreenState extends State<PosScreen> {
         _cart.clear();
         _showCartMobile = false;
       });
+      AppEvents.instance.fireMany(
+          [AppEventType.products, AppEventType.invoices, AppEventType.customers]);
       await _loadProducts(); // لتحديث الكميات المتبقية في الواجهة
       if (mounted) _showSnack('تم حفظ الفاتورة بنجاح');
+    } on InsufficientStockException catch (e) {
+      _showSnack(e.toString());
+    } on InvalidPaymentException catch (e) {
+      _showSnack(e.toString());
     } catch (e) {
-      _showSnack('حدث خطأ أثناء حفظ الفاتورة: $e');
+      _showSnack('حدث خطأ أثناء حفظ الفاتورة، حاول مرة أخرى');
     } finally {
       if (mounted) setState(() => _saving = false);
     }
@@ -152,6 +179,21 @@ class _PosScreenState extends State<PosScreen> {
         appBar: AppBar(
           title: const Text('نقطة البيع'),
           actions: [
+      IconButton(
+              icon: const Icon(Icons.replay),
+              tooltip: 'تحديث',
+              onPressed: () => _loadProducts(),
+            ),
+            const NotificationBell(),
+
+            IconButton(
+              icon: const Icon(Icons.settings_outlined),
+              tooltip: 'الإعدادات',
+              onPressed: () => Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const SettingsScreen()),
+              ),
+            ),
             IconButton(
               icon: const Icon(Icons.delete_sweep_outlined),
               onPressed: _cart.isEmpty
@@ -167,6 +209,15 @@ class _PosScreenState extends State<PosScreen> {
         body: _loading
             ? const Center(child: CircularProgressIndicator(color: _primary))
             : (isWide ? _buildWide() : _buildNarrow()),
+        // زر باركود عائم مستقل (لا يغيّر زر الباركود الأصلي في الأعلى):
+        // يفتح شاشة مسح مستمرة بتدفّق بيع خاص بها.
+        floatingActionButton: FloatingActionButton.extended(
+          heroTag: 'continuousScannerFab',
+          onPressed: _openContinuousScanner,
+          backgroundColor: _primary,
+          icon: const Icon(Icons.qr_code_scanner_outlined, color: Colors.white),
+          label: const Text('مسح مستمر', style: TextStyle(color: Colors.white)),
+        ),
       ),
     );
   }

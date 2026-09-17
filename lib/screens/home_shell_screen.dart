@@ -4,6 +4,7 @@ import 'inventory_screen.dart';
 import 'invoices_screen.dart';
 import 'reports_screen.dart';
 import 'profits_screen.dart';
+import 'customers_screen.dart';
 const _primary = Color(0xFF0F5132);
 
 class HomeShell extends StatefulWidget {
@@ -20,6 +21,7 @@ class _HomeShellState extends State<HomeShell> {
     const PosScreen(),
     const InventoryScreen(),
     const InvoicesScreen(),
+    const CustomersScreen(),
     const ReportsScreen(),
     const ProfitsScreen(),
   ];
@@ -53,6 +55,11 @@ class _HomeShellState extends State<HomeShell> {
               icon: Icon(Icons.receipt_long_outlined),
               activeIcon: Icon(Icons.receipt_long),
               label: 'الفواتير',
+            ),
+            BottomNavigationBarItem(
+              icon: Icon(Icons.people_alt_outlined),
+              activeIcon: Icon(Icons.people_alt),
+              label: 'العملاء',
             ),
             BottomNavigationBarItem(
               icon: Icon(Icons.analytics_outlined),

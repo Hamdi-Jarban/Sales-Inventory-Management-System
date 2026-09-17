@@ -1,6 +1,9 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:untitled2/controller/invoice_controller.dart';
 import 'package:untitled2/model/invoice.dart';
+import 'package:untitled2/services/app_events.dart';
+import 'package:untitled2/widgets/notification_bell.dart';
 
 const _primary = Color(0xFF0F5132);
 
@@ -18,10 +21,19 @@ class _InvoicesScreenState extends State<InvoicesScreen> {
   PaymentStatus? _filter;
   String _search = '';
 
+  StreamSubscription<AppEventType>? _eventsSub;
+
   @override
   void initState() {
     super.initState();
     _load();
+    _eventsSub = AppEvents.instance.stream.listen((_) => _load());
+  }
+
+  @override
+  void dispose() {
+    _eventsSub?.cancel();
+    super.dispose();
   }
 
   Future<void> _load() async {
@@ -51,7 +63,7 @@ class _InvoicesScreenState extends State<InvoicesScreen> {
       textDirection: TextDirection.rtl,
       child: Scaffold(
         backgroundColor: const Color(0xFFF8F9FA),
-        appBar: AppBar(title: const Text('الفواتير')),
+        appBar: AppBar(title: const Text('الفواتير'), actions: const [NotificationBell()]),
         body: Column(
           children: [
             Padding(
@@ -256,13 +268,50 @@ class _InvoicesScreenState extends State<InvoicesScreen> {
                           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                         ),
                         onPressed: () async {
-                          await _controller.registerPayment(full.id!, full.remainingAmount);
-                          if (mounted) Navigator.pop(context);
-                          _load();
+                          try {
+                            await _controller.registerPayment(full.id!, full.remainingAmount);
+                            AppEvents.instance.fireMany(
+                                [AppEventType.invoices, AppEventType.payments, AppEventType.customers]);
+                            if (mounted) Navigator.pop(context);
+                            _load();
+                          } catch (e) {
+                            if (mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(content: Text(e.toString()), backgroundColor: Colors.red));
+                            }
+                          }
                         },
                         icon: const Icon(Icons.check, color: Colors.white),
                         label: const Text('تسجيل سداد المتبقي بالكامل',
                             style: TextStyle(color: Colors.white)),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    SizedBox(
+                      height: 46,
+                      child: OutlinedButton.icon(
+                        style: OutlinedButton.styleFrom(foregroundColor: _primary),
+                        onPressed: () async {
+                          final amount = await showDialog<double>(
+                            context: context,
+                            builder: (_) => _PartialPaymentDialog(maxAmount: full.remainingAmount),
+                          );
+                          if (amount == null) return;
+                          try {
+                            await _controller.registerPayment(full.id!, amount);
+                            AppEvents.instance.fireMany(
+                                [AppEventType.invoices, AppEventType.payments, AppEventType.customers]);
+                            if (mounted) Navigator.pop(context);
+                            _load();
+                          } catch (e) {
+                            if (mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(content: Text(e.toString()), backgroundColor: Colors.red));
+                            }
+                          }
+                        },
+                        icon: const Icon(Icons.payments_outlined),
+                        label: const Text('تسجيل دفعة جزئية بمبلغ محدَّد'),
                       ),
                     ),
                   ],
@@ -271,6 +320,75 @@ class _InvoicesScreenState extends State<InvoicesScreen> {
             );
           },
         ),
+      ),
+    );
+  }
+}
+
+class _PartialPaymentDialog extends StatefulWidget {
+  final double maxAmount;
+  const _PartialPaymentDialog({required this.maxAmount});
+
+  @override
+  State<_PartialPaymentDialog> createState() => _PartialPaymentDialogState();
+}
+
+class _PartialPaymentDialogState extends State<_PartialPaymentDialog> {
+  final _ctrl = TextEditingController();
+  String? _error;
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    final amount = double.tryParse(_ctrl.text.trim());
+    if (amount == null || amount <= 0) {
+      setState(() => _error = 'أدخل مبلغاً صحيحاً أكبر من صفر');
+      return;
+    }
+    if (amount > widget.maxAmount) {
+      setState(() => _error =
+          'المبلغ أكبر من المتبقي على الفاتورة (${widget.maxAmount.toStringAsFixed(2)})');
+      return;
+    }
+    Navigator.pop(context, amount);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Directionality(
+      textDirection: TextDirection.rtl,
+      child: AlertDialog(
+        title: const Text('تسجيل دفعة جزئية'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text('المتبقي على الفاتورة: ${widget.maxAmount.toStringAsFixed(2)} ر.س',
+                style: TextStyle(color: Colors.grey[600])),
+            const SizedBox(height: 10),
+            TextField(
+              controller: _ctrl,
+              autofocus: true,
+              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              decoration: const InputDecoration(labelText: 'المبلغ المدفوع الآن'),
+            ),
+            if (_error != null) ...[
+              const SizedBox(height: 8),
+              Text(_error!, style: const TextStyle(color: Colors.red, fontSize: 12)),
+            ],
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('إلغاء')),
+          ElevatedButton(
+            onPressed: _submit,
+            style: ElevatedButton.styleFrom(backgroundColor: _primary),
+            child: const Text('تأكيد', style: TextStyle(color: Colors.white)),
+          ),
+        ],
       ),
     );
   }

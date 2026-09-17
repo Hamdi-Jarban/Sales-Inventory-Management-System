@@ -1,7 +1,9 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:untitled2/model/product.dart';
 import '../controller/product_controller.dart';
+import '../services/app_events.dart';
 import 'add_product_screen.dart';
 
 class InventoryScreen extends StatefulWidget {
@@ -19,12 +21,25 @@ class _InventoryScreenState extends State<InventoryScreen> {
 
   final ProductController product=ProductController();
   List<ProductModel>_products=[];
+  StreamSubscription<AppEventType>? _eventsSub;
   @override
   void initState()
   {
     super.initState();
     _loadData();
+    _eventsSub = AppEvents.instance.stream.listen((type) {
+      if (type == AppEventType.products || type == AppEventType.all) {
+        _loadData();
+      }
+    });
   }
+
+  @override
+  void dispose() {
+    _eventsSub?.cancel();
+    super.dispose();
+  }
+
   Future<void>_loadData() async
   {
     List<ProductModel>data=await product.GetAll();
