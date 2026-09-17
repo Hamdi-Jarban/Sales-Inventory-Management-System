@@ -1,5 +1,7 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:untitled2/controller/invoice_controller.dart';
+import 'package:untitled2/services/app_events.dart';
 
 const _primary = Color(0xFF0F5132);
 
@@ -20,10 +22,19 @@ class _ProfitsScreenState extends State<ProfitsScreen> {
   double _outstanding = 0;
   List<Map<String, dynamic>> _topProducts = [];
 
+  StreamSubscription<AppEventType>? _eventsSub;
+
   @override
   void initState() {
     super.initState();
     _load();
+    _eventsSub = AppEvents.instance.stream.listen((_) => _load());
+  }
+
+  @override
+  void dispose() {
+    _eventsSub?.cancel();
+    super.dispose();
   }
 
   String _isoDaysAgo(int days) =>

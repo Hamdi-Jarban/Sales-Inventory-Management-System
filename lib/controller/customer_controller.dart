@@ -39,6 +39,24 @@ class CustomerController {
     return insert(CustomerModel(name: name, phone: phone, email: email));
   }
 
+  /// بحث حقيقي من SQLite بالاسم أو رقم الهاتف (يُستخدم في Autocomplete
+  /// عند اختيار العميل أثناء الدفع الآجل/الجزئي). محدود بعدد نتائج
+  /// صغير ولا يُحمَّل كل جدول العملاء إلى الذاكرة.
+  Future<List<CustomerModel>> search(String query, {int limit = 15}) async {
+    final q = query.trim();
+    if (q.isEmpty) return [];
+    final rows = await DatabaseService.instance.rawQuery(
+      '''
+      SELECT * FROM customers
+      WHERE name LIKE ? OR phone LIKE ?
+      ORDER BY name ASC
+      LIMIT ?
+      ''',
+      ['%$q%', '%$q%', limit],
+    );
+    return rows.map((e) => CustomerModel.fromMap(e)).toList();
+  }
+
   Future<bool> update(int id, CustomerModel c) async {
     final count = await DatabaseService.instance.UpdataData(table, id, c.toMap());
     return count > 0;

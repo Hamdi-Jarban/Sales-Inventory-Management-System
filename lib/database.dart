@@ -2,13 +2,21 @@ import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart';
 
 /// ═══════════════════════════════════════════════════════════════
+/// DatabaseService
+/// طبقة وصول عامة لقاعدة بيانات SQLite (sqflite) — مشتركة بين كل
+/// الـ Controllers (Products / Customers / Invoices).
+/// لا تحتوي منطق عمل (Business Logic)، فقط عمليات CRUD عامة +
+/// إنشاء/ترقية الجداول.
+/// ═══════════════════════════════════════════════════════════════
 class DatabaseService {
   static final DatabaseService instance = DatabaseService._init();
   static Database? _db;
 
   DatabaseService._init();
 
-  static const int _dbVersion = 2;
+  // كل تعديل على شكل الجداول لازم يرفع هذا الرقم + إضافة خطوة ترقية
+  // بالأسفل في _upgradeDB حتى لا تنكسر نسخة المستخدم القديمة.
+  static const int _dbVersion = 3;
 
   Future<Database> get database async {
     if (_db != null) return _db!;
@@ -88,6 +96,51 @@ class DatabaseService {
         'CREATE INDEX idx_invoices_status ON invoices (payment_status)');
     await db.execute(
         'CREATE INDEX idx_invoices_customer ON invoices (customer_id)');
+
+    await _createV3Tables(db);
+  }
+
+  /// جدول سجل الدفعات + جدول الإعدادات (مثل بيانات SMTP) + الفهارس
+  /// الإضافية. مُستخرَج في دالة مستقلة حتى يُستخدَم من onCreate مباشرة
+  /// (قاعدة جديدة) ومن _upgradeDB (قاعدة قديمة تُرقَّى) بدون تكرار.
+  Future<void> _createV3Tables(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS payments (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        invoice_id INTEGER NOT NULL,
+        customer_id INTEGER,
+        amount REAL NOT NULL,
+        payment_method TEXT NOT NULL DEFAULT 'نقدي',
+        payment_date TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+        notes TEXT,
+        FOREIGN KEY (invoice_id) REFERENCES invoices (id) ON DELETE CASCADE,
+        FOREIGN KEY (customer_id) REFERENCES customers (id) ON DELETE SET NULL
+      )
+    ''');
+
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS settings (
+        key TEXT PRIMARY KEY,
+        value TEXT
+      )
+    ''');
+
+    await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_payments_invoice ON payments (invoice_id)');
+    await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_payments_customer ON payments (customer_id)');
+    await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_customers_phone ON customers (phone)');
+    await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_customers_email ON customers (email)');
+    await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_products_barcode ON products (barcode)');
+    await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_invoices_created ON invoices (created_at)');
+    await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_invoice_items_product ON invoice_items (product_id)');
+    await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_invoice_items_invoice ON invoice_items (invoice_id)');
   }
 
   /// يُنفَّذ تلقائياً عند فتح قاعدة بيانات بنسخة أقدم — يضيف الجداول
@@ -132,6 +185,35 @@ class DatabaseService {
               .toSet();
       if (!itemCols.contains('product_id')) {
         await db.execute('ALTER TABLE invoice_items ADD COLUMN product_id INTEGER');
+      }
+    }
+
+    if (oldVersion < 3) {
+      // إضافة سجل الدفعات الحقيقي (Payments) + جدول الإعدادات (SMTP...)
+      // + فهارس إضافية، دون المساس بأي بيانات موجودة.
+      await _createV3Tables(db);
+
+      // Backfill: لكل فاتورة قديمة عليها مبلغ مدفوع لكن بلا أي سطر في
+      // جدول payments (لأن الجدول لم يكن موجوداً وقتها)، أنشئ دفعة
+      // واحدة تمثّل ما دُفع فعلياً حتى تتطابق سجلات الدفعات مع
+      // paid_amount المخزَّن على الفاتورة، دون فقدان أي بيانات تاريخية.
+      final oldInvoices = await db.rawQuery(
+          "SELECT id, customer_id, paid_amount, payment_method, created_at FROM invoices WHERE paid_amount > 0");
+      for (final inv in oldInvoices) {
+        final invoiceId = inv['id'] as int;
+        final existing = await db.rawQuery(
+            'SELECT COUNT(*) AS c FROM payments WHERE invoice_id = ?',
+            [invoiceId]);
+        final already = (existing.first['c'] as int?) ?? 0;
+        if (already > 0) continue;
+        await db.insert('payments', {
+          'invoice_id': invoiceId,
+          'customer_id': inv['customer_id'],
+          'amount': inv['paid_amount'],
+          'payment_method': inv['payment_method'] ?? 'نقدي',
+          'payment_date': inv['created_at'],
+          'notes': 'دفعة أولية عند إنشاء الفاتورة (تمت تعبئتها تلقائياً عند ترقية قاعدة البيانات)',
+        });
       }
     }
   }

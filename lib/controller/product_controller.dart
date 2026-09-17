@@ -1,7 +1,7 @@
 import 'package:untitled2/database.dart';
 import 'package:untitled2/model/product.dart';
 
-class ProductController{
+class ProductController {
   final table="products";
   Future<int>Insert(Map<String,dynamic> p)async{
     return DatabaseService.instance.insert(table, p);
@@ -38,5 +38,16 @@ class ProductController{
     List<ProductModel>result=product.map((e)=> ProductModel.fromMap(e)).toList();
     if(result.length>0){return result.first;}
     return null;
+  }
+
+  /// المنتجات التي وصلت أو تجاوزت حد "الحد الأدنى للمخزون" (min_alert)
+  /// وليست مخفية — تُستخدم في تقرير "يحتاج إعادة طلب" من بيانات حقيقية.
+  Future<List<ProductModel>> getLowStock() async {
+    final rows = await DatabaseService.instance.rawQuery('''
+      SELECT * FROM products
+      WHERE is_hidden = 0 AND stock <= min_alert
+      ORDER BY stock ASC
+    ''');
+    return rows.map((e) => ProductModel.fromMap(e)).toList();
   }
 }
