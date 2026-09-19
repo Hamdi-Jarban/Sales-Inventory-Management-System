@@ -1,9 +1,4 @@
 import 'package:untitled2/model/product.dart';
-
-/// ═══════════════════════════════════════════════════════════════
-/// BarcodeNormalizer
-/// توحيد صيغة الباركود قبل أي مقارنة أو تخزين
-/// ═══════════════════════════════════════════════════════════════
 class BarcodeNormalizer {
   BarcodeNormalizer._();
 

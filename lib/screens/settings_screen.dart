@@ -5,10 +5,6 @@ import 'package:untitled2/controller/settings_controller.dart';
 
 const _primary = Color(0xFF0F5132);
 
-/// شاشة الإعدادات: ضبط بيانات خادم البريد (SMTP) المستخدَم لإرسال
-/// تذكيرات الديون. القيم تُخزَّن في جدول settings بقاعدة البيانات
-/// المحلية على جهاز المستخدم فقط — لا توجد أي بيانات اعتماد مكتوبة
-/// داخل الكود المصدري للتطبيق.
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({Key? key}) : super(key: key);
 

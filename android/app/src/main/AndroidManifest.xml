@@ -3,7 +3,7 @@
     <uses-feature android:name="android.hardware.camera" />
     <uses-feature android:name="android.hardware.camera.autofocus" />
     <application
-        android:label="untitled2"
+        android:label="متجري"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity
