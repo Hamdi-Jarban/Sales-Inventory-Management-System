@@ -9,9 +9,6 @@ import 'package:untitled2/services/app_events.dart';
 
 const _primary = Color(0xFF0F5132);
 
-/// صفحة العميل: بياناته، ملخّص المشتريات/المدفوع/المتبقي (من
-/// SQLite فعلياً)، سجل الفواتير والدفعات، وإمكانية "تسجيل دفعة"
-/// جديدة تُوزَّع تلقائياً على فواتيره الآجلة/الجزئية (الأقدم أولاً).
 class CustomerDetailScreen extends StatefulWidget {
   final int customerId;
   const CustomerDetailScreen({Key? key, required this.customerId}) : super(key: key);
